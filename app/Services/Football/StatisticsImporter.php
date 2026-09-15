@@ -20,13 +20,12 @@ final class StatisticsImporter
         $pdo->beginTransaction();
 
         try {
-            foreach ($periods as $period => $sides) {
+            foreach ($periods as $sides) {
                 $this->upsert($pdo, $fixtureId, $homeTeamId, $sides['home']);
                 $this->upsert($pdo, $fixtureId, $awayTeamId, $sides['away']);
             }
 
-            $statement = $pdo->prepare('UPDATE fixtures SET stats_imported = 1, last_synced_at = NOW() WHERE id = ?');
-            $statement->execute([$fixtureId]);
+            $pdo->prepare('UPDATE fixtures SET stats_imported = 1, last_synced_at = NOW() WHERE id = ?')->execute([$fixtureId]);
             $pdo->commit();
         } catch (\Throwable $exception) {
             if ($pdo->inTransaction()) {
@@ -41,10 +40,14 @@ final class StatisticsImporter
         $allowed = [
             'period','xg','xgot','expected_assists','possession','shots','shots_on_target',
             'shots_off_target','blocked_shots','shots_inside_box','shots_outside_box','woodwork',
-            'big_chances','corners','touches_opposition_box','offsides','free_kicks','fouls',
-            'yellow_cards','red_cards','duels_won','clearances','interceptions',
-            'errors_leading_to_shot','errors_leading_to_goal','goalkeeper_saves','xgot_faced',
-            'goals_prevented'
+            'big_chances','corners','touches_opposition_box','offsides','free_kicks',
+            'passes_attempted','passes_completed','pass_accuracy',
+            'long_passes_attempted','long_passes_completed','long_pass_accuracy',
+            'final_third_passes_attempted','final_third_passes_completed','final_third_pass_accuracy',
+            'crosses_attempted','crosses_completed','cross_accuracy',
+            'fouls','yellow_cards','red_cards','tackles_attempted','tackles_won','duels_won',
+            'clearances','interceptions','errors_leading_to_shot','errors_leading_to_goal',
+            'goalkeeper_saves','xgot_faced','goals_prevented'
         ];
 
         $data = ['fixture_id' => $fixtureId, 'team_id' => $teamId];
@@ -66,7 +69,6 @@ final class StatisticsImporter
         $sql = 'INSERT INTO team_match_stats (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ') '
              . 'ON DUPLICATE KEY UPDATE ' . ($updateSql !== '' ? $updateSql . ', ' : '') . 'updated_at = NOW()';
 
-        $statement = $pdo->prepare($sql);
-        $statement->execute($data);
+        $pdo->prepare($sql)->execute($data);
     }
 }
