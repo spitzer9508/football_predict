@@ -34,33 +34,41 @@ final class FlashscoreNormalizer
         'Goals prevented' => 'goals_prevented',
     ];
 
+    private const RATIO_MAP = [
+        'Passes' => ['pass_accuracy', 'passes_completed', 'passes_attempted'],
+        'Long passes' => ['long_pass_accuracy', 'long_passes_completed', 'long_passes_attempted'],
+        'Final third passes' => ['final_third_pass_accuracy', 'final_third_passes_completed', 'final_third_passes_attempted'],
+        'Crosses' => ['cross_accuracy', 'crosses_completed', 'crosses_attempted'],
+        'Tackles' => [null, 'tackles_won', 'tackles_attempted'],
+    ];
+
     public function normalizeStatistics(array $payload): array
     {
-        $periods = [
-            'match' => 'MATCH',
-            '1st-half' => 'FIRST_HALF',
-            '2nd-half' => 'SECOND_HALF',
-        ];
-
+        $periods = ['match' => 'MATCH', '1st-half' => 'FIRST_HALF', '2nd-half' => 'SECOND_HALF'];
         $result = [];
 
         foreach ($periods as $sourcePeriod => $period) {
             $home = ['period' => $period];
             $away = ['period' => $period];
+            $stats = [];
+            $this->collectStats($payload[$sourcePeriod] ?? [], $stats);
 
-            foreach (($payload[$sourcePeriod] ?? []) as $stat) {
-                $label = $stat['name'] ?? null;
-                if (!$label || !isset(self::STAT_MAP[$label])) {
+            foreach ($stats as $stat) {
+                $label = $stat['name'];
+                if (isset(self::STAT_MAP[$label])) {
+                    $field = self::STAT_MAP[$label];
+                    if (!array_key_exists($field, $home)) {
+                        $home[$field] = $this->parseScalar($stat['home_team'] ?? null);
+                        $away[$field] = $this->parseScalar($stat['away_team'] ?? null);
+                    }
                     continue;
                 }
 
-                $field = self::STAT_MAP[$label];
-                if (array_key_exists($field, $home)) {
-                    continue;
+                if (isset(self::RATIO_MAP[$label])) {
+                    [$accuracy, $completed, $attempted] = self::RATIO_MAP[$label];
+                    $this->applyRatio($home, $stat['home_team'] ?? null, $accuracy, $completed, $attempted);
+                    $this->applyRatio($away, $stat['away_team'] ?? null, $accuracy, $completed, $attempted);
                 }
-
-                $home[$field] = $this->parseScalar($stat['home_team'] ?? null);
-                $away[$field] = $this->parseScalar($stat['away_team'] ?? null);
             }
 
             $result[$period] = ['home' => $home, 'away' => $away];
@@ -69,21 +77,43 @@ final class FlashscoreNormalizer
         return $result;
     }
 
+    private function collectStats(mixed $node, array &$stats): void
+    {
+        if (!is_array($node)) {
+            return;
+        }
+
+        if (isset($node['name']) && (array_key_exists('home_team', $node) || array_key_exists('away_team', $node))) {
+            $stats[] = $node;
+            return;
+        }
+
+        foreach ($node as $child) {
+            $this->collectStats($child, $stats);
+        }
+    }
+
+    private function applyRatio(array &$side, mixed $value, ?string $accuracy, string $completed, string $attempted): void
+    {
+        if (array_key_exists($attempted, $side)) {
+            return;
+        }
+
+        $parsed = $this->parsePercentageCount($value);
+        if ($accuracy !== null) {
+            $side[$accuracy] = $parsed['accuracy'];
+        }
+        $side[$completed] = $parsed['completed'];
+        $side[$attempted] = $parsed['attempted'];
+    }
+
     public function parsePercentageCount(mixed $value): array
     {
-        if (!is_string($value)) {
+        if (!is_string($value) || !preg_match('/([0-9.]+)%\s*\((\d+)\/(\d+)\)/', trim($value), $matches)) {
             return ['accuracy' => null, 'completed' => null, 'attempted' => null];
         }
 
-        if (!preg_match('/([0-9.]+)%\\s*\\((\\d+)\\/(\\d+)\\)/', $value, $matches)) {
-            return ['accuracy' => null, 'completed' => null, 'attempted' => null];
-        }
-
-        return [
-            'accuracy' => (float) $matches[1],
-            'completed' => (int) $matches[2],
-            'attempted' => (int) $matches[3],
-        ];
+        return ['accuracy' => (float) $matches[1], 'completed' => (int) $matches[2], 'attempted' => (int) $matches[3]];
     }
 
     private function parseScalar(mixed $value): int|float|null
@@ -91,15 +121,12 @@ final class FlashscoreNormalizer
         if ($value === null || $value === '') {
             return null;
         }
-
         if (is_int($value) || is_float($value)) {
             return $value;
         }
-
         if (is_string($value) && str_ends_with(trim($value), '%')) {
             return (float) rtrim(trim($value), '%');
         }
-
         return is_numeric($value) ? (float) $value : null;
     }
 }
