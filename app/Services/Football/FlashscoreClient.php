@@ -62,6 +62,11 @@ final class FlashscoreClient
         return $this->get('matches/momentum', ['match_id' => $matchId]);
     }
 
+    public function matchDetails(string $matchId): array
+    {
+        return $this->get('matches/details', ['match_id' => $matchId]);
+    }
+
     public function matchStatistics(string $matchId): array
     {
         return $this->get('matches/match/stats', ['match_id' => $matchId]);
