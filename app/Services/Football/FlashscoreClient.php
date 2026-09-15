@@ -32,6 +32,7 @@ final class FlashscoreClient
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, (int) $this->config['connect_timeout']);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Accept: application/json',
+            'Content-Type: application/json',
             'x-rapidapi-host: ' . $this->config['host'],
             'x-rapidapi-key: ' . $key,
         ]);
@@ -59,5 +60,10 @@ final class FlashscoreClient
     public function momentum(string $matchId): array
     {
         return $this->get('matches/momentum', ['match_id' => $matchId]);
+    }
+
+    public function matchStatistics(string $matchId): array
+    {
+        return $this->get('matches/match/stats', ['match_id' => $matchId]);
     }
 }
