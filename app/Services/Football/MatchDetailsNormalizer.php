@@ -36,8 +36,8 @@ final class MatchDetailsNormalizer
                 'country_code' => null,
                 'logo' => null,
             ],
-            'home_team' => $this->team($home, $country['name'] ?? null),
-            'away_team' => $this->team($away, $country['name'] ?? null),
+            'home_team' => $this->team($home),
+            'away_team' => $this->team($away),
             'kickoff' => $payload['timestamp'] ?? null,
             'status' => $this->status(is_array($status) ? $status : []),
             'round_name' => $roundName,
@@ -50,13 +50,13 @@ final class MatchDetailsNormalizer
         ];
     }
 
-    private function team(array $team, mixed $country): array
+    private function team(array $team): array
     {
         return [
             'provider_id' => (string) ($team['team_id'] ?? ''),
             'name' => (string) ($team['name'] ?? ''),
             'short_name' => $team['short_name'] ?? null,
-            'country' => $country,
+            'country' => null,
             'logo' => $team['image_path'] ?? $team['small_image_path'] ?? null,
         ];
     }
