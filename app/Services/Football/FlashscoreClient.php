@@ -26,6 +26,7 @@ final class FlashscoreClient
             $url .= '?' . http_build_query($query);
         }
 
+        $responseHeaders = [];
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, (int) $this->config['timeout']);
@@ -36,6 +37,14 @@ final class FlashscoreClient
             'x-rapidapi-host: ' . $this->config['host'],
             'x-rapidapi-key: ' . $key,
         ]);
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, static function ($curl, string $header) use (&$responseHeaders): int {
+            $length = strlen($header);
+            $parts = explode(':', $header, 2);
+            if (count($parts) === 2) {
+                $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+            }
+            return $length;
+        });
 
         $body = curl_exec($ch);
         $error = curl_error($ch);
@@ -45,8 +54,16 @@ final class FlashscoreClient
         if ($body === false) {
             throw new RuntimeException('Football API connection failed: ' . $error);
         }
+
+        if ($status === 429) {
+            $retryAfter = isset($responseHeaders['retry-after']) && ctype_digit($responseHeaders['retry-after'])
+                ? (int) $responseHeaders['retry-after']
+                : null;
+            throw new FootballApiException('Football API rate limit reached (HTTP 429).', 429, $retryAfter);
+        }
+
         if ($status < 200 || $status >= 300) {
-            throw new RuntimeException('Football API returned HTTP ' . $status);
+            throw new FootballApiException('Football API returned HTTP ' . $status, $status);
         }
 
         $data = json_decode($body, true);
