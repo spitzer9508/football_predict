@@ -138,3 +138,16 @@ CREATE TABLE IF NOT EXISTS api_usage (
     KEY idx_api_created (created_at),
     KEY idx_api_provider (provider)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS collector_state (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    state_key VARCHAR(100) NOT NULL,
+    current_day INT NOT NULL DEFAULT -1,
+    target_day INT NOT NULL DEFAULT -365,
+    status VARCHAR(30) NOT NULL DEFAULT 'active',
+    last_run_at DATETIME NULL,
+    completed_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_collector_state_key (state_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
