@@ -33,8 +33,8 @@ final class MatchListNormalizer
                         'country_code' => null,
                         'logo' => $tournament['image_path'] ?? null,
                     ],
-                    'home_team' => $this->team($match['home_team'] ?? [], $countryName),
-                    'away_team' => $this->team($match['away_team'] ?? [], $countryName),
+                    'home_team' => $this->team($match['home_team'] ?? []),
+                    'away_team' => $this->team($match['away_team'] ?? []),
                     'kickoff' => $match['timestamp'] ?? null,
                     'status' => $this->status($status),
                     'round_name' => null,
@@ -54,14 +54,14 @@ final class MatchListNormalizer
         return $fixtures;
     }
 
-    private function team(mixed $team, string $country): array
+    private function team(mixed $team): array
     {
         $team = is_array($team) ? $team : [];
         return [
             'provider_id' => (string) ($team['team_id'] ?? ''),
             'name' => (string) ($team['name'] ?? ''),
             'short_name' => $team['short_name'] ?? null,
-            'country' => $country !== '' ? $country : null,
+            'country' => null,
             'logo' => $team['image_path'] ?? $team['small_image_path'] ?? null,
         ];
     }
