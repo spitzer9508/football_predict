@@ -2,6 +2,7 @@
 
 require dirname(__DIR__) . '/bootstrap.php';
 
+use App\Services\Football\FootballApiException;
 use App\Services\Football\HistoricalCollectionState;
 use App\Services\Football\HistoricalFixtureCollector;
 
@@ -19,6 +20,19 @@ foreach ($argv as $argument) {
     }
 }
 
+$lockPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'football_predict_history.lock';
+$lockHandle = fopen($lockPath, 'c+');
+if ($lockHandle === false) {
+    fwrite(STDERR, "Unable to create historical collector lock.\n");
+    exit(1);
+}
+
+if (!flock($lockHandle, LOCK_EX | LOCK_NB)) {
+    echo "Historical collector is already running; this run was skipped.\n";
+    fclose($lockHandle);
+    exit(0);
+}
+
 try {
     $stateStore = new HistoricalCollectionState();
     $state = $stateStore->load($defaultTargetDay);
@@ -32,12 +46,26 @@ try {
     $fromDay = (int) $state['current_day'];
     $targetDay = (int) $state['target_day'];
 
-    $result = (new HistoricalFixtureCollector())->collect(
-        $fromDay,
-        $targetDay,
-        $timezone,
-        $statisticsLimit
-    );
+    try {
+        $result = (new HistoricalFixtureCollector())->collect(
+            $fromDay,
+            $targetDay,
+            $timezone,
+            $statisticsLimit
+        );
+    } catch (FootballApiException $e) {
+        if ($e->isRateLimited()) {
+            $stateStore->saveProgress($fromDay, $targetDay, 'rate_limited');
+            echo "Historical collection paused by API rate limit.\n";
+            echo "Progress preserved at day: {$fromDay}\n";
+            if ($e->retryAfter() !== null) {
+                echo "Provider retry-after: {$e->retryAfter()} seconds\n";
+            }
+            echo "Status: rate_limited\n";
+            exit(0);
+        }
+        throw $e;
+    }
 
     if ($result['stopped_by_budget']) {
         $nextDay = (int) $result['next_day'];
@@ -71,4 +99,7 @@ try {
 } catch (Throwable $e) {
     fwrite(STDERR, $e->getMessage() . PHP_EOL);
     exit(1);
+} finally {
+    flock($lockHandle, LOCK_UN);
+    fclose($lockHandle);
 }
