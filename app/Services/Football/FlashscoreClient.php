@@ -57,6 +57,15 @@ final class FlashscoreClient
         return $data;
     }
 
+    public function matchList(int $day = 0, string $timezone = 'Europe/Berlin', int $sportId = 1): array
+    {
+        return $this->get('matches/list', [
+            'sport_id' => $sportId,
+            'day' => $day,
+            'timezone' => $timezone,
+        ]);
+    }
+
     public function momentum(string $matchId): array
     {
         return $this->get('matches/momentum', ['match_id' => $matchId]);
