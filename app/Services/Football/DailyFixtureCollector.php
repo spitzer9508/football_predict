@@ -41,6 +41,7 @@ final class DailyFixtureCollector
             'eligible' => count($fixtures),
             'filtered' => count($allFixtures) - count($fixtures),
             'imported' => 0,
+            'stats_api_calls' => 0,
             'stats_imported' => 0,
             'stats_skipped' => 0,
             'stats_already_imported' => 0,
@@ -49,7 +50,6 @@ final class DailyFixtureCollector
             'errors' => [],
         ];
 
-        $statsCalls = 0;
         foreach ($fixtures as $fixture) {
             try {
                 $fixtureId = $this->fixtures->import($fixture);
@@ -64,12 +64,12 @@ final class DailyFixtureCollector
                     continue;
                 }
 
-                if ($statsCalls >= $statisticsLimit) {
+                if ($result['stats_api_calls'] >= $statisticsLimit) {
                     $result['stats_budget_exhausted']++;
                     continue;
                 }
 
-                $statsCalls++;
+                $result['stats_api_calls']++;
                 try {
                     $stats = $this->statistics->importByProviderId($fixture['provider_id']);
                     if ($stats['statistics_rows'] > 0) {
@@ -77,10 +77,22 @@ final class DailyFixtureCollector
                     } else {
                         $result['stats_skipped']++;
                     }
+                } catch (FootballApiException $e) {
+                    if ($e->isRateLimited()) {
+                        throw $e;
+                    }
+                    $result['stats_skipped']++;
+                    $result['errors'][] = $fixture['provider_id'] . ' stats: ' . $e->getMessage();
                 } catch (\Throwable $e) {
                     $result['stats_skipped']++;
                     $result['errors'][] = $fixture['provider_id'] . ' stats: ' . $e->getMessage();
                 }
+            } catch (FootballApiException $e) {
+                if ($e->isRateLimited()) {
+                    throw $e;
+                }
+                $result['failed']++;
+                $result['errors'][] = ($fixture['provider_id'] ?? 'unknown') . ': ' . $e->getMessage();
             } catch (\Throwable $e) {
                 $result['failed']++;
                 $result['errors'][] = ($fixture['provider_id'] ?? 'unknown') . ': ' . $e->getMessage();
