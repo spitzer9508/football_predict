@@ -8,59 +8,43 @@ use App\Services\Football\HistoricalFixtureCollector;
 
 $timezone = 'Europe/Berlin';
 $statisticsLimit = 20;
-$defaultTargetDay = -365;
-
+$days = 365;
+$daysPerRun = 3;
 foreach ($argv as $argument) {
-    if (str_starts_with($argument, '--timezone=')) {
-        $timezone = substr($argument, strlen('--timezone='));
-    } elseif (str_starts_with($argument, '--stats-limit=')) {
-        $statisticsLimit = max(0, (int) substr($argument, strlen('--stats-limit=')));
-    } elseif (str_starts_with($argument, '--target=')) {
-        $defaultTargetDay = min(-1, (int) substr($argument, strlen('--target=')));
-    }
+    if (str_starts_with($argument, '--timezone=')) $timezone = substr($argument, 11);
+    elseif (str_starts_with($argument, '--stats-limit=')) $statisticsLimit = max(0, (int) substr($argument, 14));
+    elseif (str_starts_with($argument, '--days=')) $days = max(1, (int) substr($argument, 7));
+    elseif (str_starts_with($argument, '--days-per-run=')) $daysPerRun = max(1, (int) substr($argument, 15));
+    elseif (str_starts_with($argument, '--target=')) $days = max(1, abs((int) substr($argument, 9)));
 }
 
 $lockPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'football_predict_history.lock';
 $lockHandle = fopen($lockPath, 'c+');
-if ($lockHandle === false) {
-    fwrite(STDERR, "Unable to create historical collector lock.\n");
-    exit(1);
-}
-
-if (!flock($lockHandle, LOCK_EX | LOCK_NB)) {
-    echo "Historical collector is already running; this run was skipped.\n";
-    fclose($lockHandle);
-    exit(0);
-}
+if ($lockHandle === false) { fwrite(STDERR, "Unable to create historical collector lock.\n"); exit(1); }
+if (!flock($lockHandle, LOCK_EX | LOCK_NB)) { echo "Historical collector is already running; this run was skipped.\n"; fclose($lockHandle); exit(0); }
 
 try {
-    $stateStore = new HistoricalCollectionState();
-    $state = $stateStore->load($defaultTargetDay);
-
+    $store = new HistoricalCollectionState();
+    $state = $store->load($days, $timezone);
+    $timezone = (string) $state['timezone'];
     if (($state['status'] ?? '') === 'completed') {
-        echo "Historical collection is already complete.\n";
-        echo "Target day: {$state['target_day']}\n";
+        echo "Historical collection is already complete.\nEnd date: {$state['end_date']}\n";
         exit(0);
     }
 
-    $fromDay = (int) $state['current_day'];
-    $targetDay = (int) $state['target_day'];
+    $cursorDate = (string) $state['cursor_date'];
+    $endDate = (string) $state['end_date'];
+    $fromDay = $store->dayOffset($cursorDate, $timezone);
+    $endOffset = $store->dayOffset($endDate, $timezone);
+    $toDay = max($endOffset, $fromDay - ($daysPerRun - 1));
 
     try {
-        $result = (new HistoricalFixtureCollector())->collect(
-            $fromDay,
-            $targetDay,
-            $timezone,
-            $statisticsLimit
-        );
+        $result = (new HistoricalFixtureCollector())->collect($fromDay, $toDay, $timezone, $statisticsLimit);
     } catch (FootballApiException $e) {
         if ($e->isRateLimited()) {
-            $stateStore->saveProgress($fromDay, $targetDay, 'rate_limited');
-            echo "Historical collection paused by API rate limit.\n";
-            echo "Progress preserved at day: {$fromDay}\n";
-            if ($e->retryAfter() !== null) {
-                echo "Provider retry-after: {$e->retryAfter()} seconds\n";
-            }
+            $store->saveProgress($cursorDate, $endDate, $timezone, 'rate_limited');
+            echo "Historical collection paused by API rate limit.\nProgress preserved at date: {$cursorDate}\n";
+            if ($e->retryAfter() !== null) echo "Provider retry-after: {$e->retryAfter()} seconds\n";
             echo "Status: rate_limited\n";
             exit(0);
         }
@@ -68,38 +52,26 @@ try {
     }
 
     if ($result['stopped_by_budget']) {
-        $nextDay = (int) $result['next_day'];
-        $stateStore->saveProgress($nextDay, $targetDay, 'active');
+        $nextOffset = (int) $result['next_day'];
+        $nextDate = (new DateTimeImmutable('today', new DateTimeZone($timezone)))->modify($nextOffset . ' days')->format('Y-m-d');
+        $store->saveProgress($nextDate, $endDate, $timezone, 'active');
     } else {
-        $stateStore->saveProgress($targetDay, $targetDay, 'completed');
+        $processedTo = (new DateTimeImmutable('today', new DateTimeZone($timezone)))->modify($toDay . ' days');
+        $nextDate = $processedTo->modify('-1 day')->format('Y-m-d');
+        if ($nextDate < $endDate) $store->saveProgress($endDate, $endDate, $timezone, 'completed');
+        else $store->saveProgress($nextDate, $endDate, $timezone, 'active');
     }
 
     echo "Historical cron collection completed.\n";
-    echo "Started from day: {$fromDay}\n";
-    echo "Target day: {$targetDay}\n";
-    echo "Days processed: {$result['days_processed']}\n";
-    echo "Eligible V1 fixtures: {$result['eligible']}\n";
-    echo "Statistics imported: {$result['stats_imported']}\n";
-    echo "Statistics already imported: {$result['stats_already_imported']}\n";
-    echo "Statistics skipped/errors: {$result['stats_skipped']}\n";
-    echo "Statistics deferred: {$result['stats_deferred']}\n";
-    echo "Failed fixtures: {$result['failed']}\n";
-
-    if ($result['stopped_by_budget']) {
-        echo "Progress saved at day: {$result['next_day']}\n";
-        echo "Status: active\n";
-    } else {
-        echo "Status: completed\n";
-    }
-
-    if ($result['errors']) {
-        echo "\nWarnings/errors:\n";
-        foreach ($result['errors'] as $error) echo "- {$error}\n";
-    }
+    echo "Started at date: {$cursorDate}\nEnd date: {$endDate}\n";
+    echo "Days processed: {$result['days_processed']}\nEligible V1 fixtures: {$result['eligible']}\n";
+    echo "Statistics imported: {$result['stats_imported']}\nStatistics already imported: {$result['stats_already_imported']}\n";
+    echo "Statistics skipped/errors: {$result['stats_skipped']}\nStatistics deferred: {$result['stats_deferred']}\nFailed fixtures: {$result['failed']}\n";
+    $newState = $store->load($days, $timezone);
+    echo "Next cursor date: {$newState['cursor_date']}\nStatus: {$newState['status']}\n";
+    if ($result['errors']) { echo "\nWarnings/errors:\n"; foreach ($result['errors'] as $error) echo "- {$error}\n"; }
 } catch (Throwable $e) {
-    fwrite(STDERR, $e->getMessage() . PHP_EOL);
-    exit(1);
+    fwrite(STDERR, $e->getMessage() . PHP_EOL); exit(1);
 } finally {
-    flock($lockHandle, LOCK_UN);
-    fclose($lockHandle);
+    flock($lockHandle, LOCK_UN); fclose($lockHandle);
 }
