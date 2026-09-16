@@ -3,6 +3,8 @@
 namespace App\Services\Football;
 
 use App\Support\Database;
+use DateTimeImmutable;
+use DateTimeZone;
 use PDO;
 
 final class HistoricalCollectionState
@@ -11,23 +13,31 @@ final class HistoricalCollectionState
 
     public function ensureTable(): void
     {
-        Database::connection()->exec(
-            "CREATE TABLE IF NOT EXISTS collector_state (
-                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                state_key VARCHAR(100) NOT NULL,
-                current_day INT NOT NULL DEFAULT -1,
-                target_day INT NOT NULL DEFAULT -365,
-                status VARCHAR(30) NOT NULL DEFAULT 'active',
-                last_run_at DATETIME NULL,
-                completed_at DATETIME NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_collector_state_key (state_key)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-        );
+        $pdo = Database::connection();
+        $pdo->exec("CREATE TABLE IF NOT EXISTS collector_state (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            state_key VARCHAR(100) NOT NULL,
+            cursor_date DATE NULL,
+            end_date DATE NULL,
+            timezone VARCHAR(64) NOT NULL DEFAULT 'Europe/Berlin',
+            status VARCHAR(30) NOT NULL DEFAULT 'active',
+            last_run_at DATETIME NULL,
+            completed_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_collector_state_key (state_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+        $columns = [];
+        foreach ($pdo->query('SHOW COLUMNS FROM collector_state')->fetchAll(PDO::FETCH_ASSOC) as $column) {
+            $columns[$column['Field']] = true;
+        }
+        if (!isset($columns['cursor_date'])) $pdo->exec('ALTER TABLE collector_state ADD COLUMN cursor_date DATE NULL AFTER state_key');
+        if (!isset($columns['end_date'])) $pdo->exec('ALTER TABLE collector_state ADD COLUMN end_date DATE NULL AFTER cursor_date');
+        if (!isset($columns['timezone'])) $pdo->exec("ALTER TABLE collector_state ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'Europe/Berlin' AFTER end_date");
     }
 
-    public function load(int $targetDay = -365): array
+    public function load(int $days = 365, string $timezone = 'Europe/Berlin'): array
     {
         $this->ensureTable();
         $pdo = Database::connection();
@@ -35,32 +45,49 @@ final class HistoricalCollectionState
         $statement->execute([self::STATE_KEY]);
         $state = $statement->fetch(PDO::FETCH_ASSOC);
 
-        if ($state) return $state;
+        if (!$state) {
+            $this->reset($days, $timezone);
+            return $this->load($days, $timezone);
+        }
 
-        $insert = $pdo->prepare(
-            "INSERT INTO collector_state (state_key, current_day, target_day, status) VALUES (?, -1, ?, 'active')"
-        );
-        $insert->execute([self::STATE_KEY, $targetDay]);
-        return $this->load($targetDay);
+        if (empty($state['cursor_date']) || empty($state['end_date'])) {
+            $this->reset($days, $timezone);
+            $statement->execute([self::STATE_KEY]);
+            return $statement->fetch(PDO::FETCH_ASSOC);
+        }
+        return $state;
     }
 
-    public function saveProgress(int $currentDay, int $targetDay, string $status = 'active'): void
+    public function saveProgress(string $cursorDate, string $endDate, string $timezone, string $status = 'active'): void
     {
         $completedAt = $status === 'completed' ? date('Y-m-d H:i:s') : null;
         $statement = Database::connection()->prepare(
-            'UPDATE collector_state SET current_day = ?, target_day = ?, status = ?, last_run_at = NOW(), completed_at = ? WHERE state_key = ?'
+            'UPDATE collector_state SET cursor_date=?, end_date=?, timezone=?, status=?, last_run_at=NOW(), completed_at=? WHERE state_key=?'
         );
-        $statement->execute([$currentDay, $targetDay, $status, $completedAt, self::STATE_KEY]);
+        $statement->execute([$cursorDate, $endDate, $timezone, $status, $completedAt, self::STATE_KEY]);
     }
 
-    public function reset(int $targetDay = -365): void
+    public function reset(int $days = 365, string $timezone = 'Europe/Berlin'): void
     {
         $this->ensureTable();
+        $days = max(1, $days);
+        $tz = new DateTimeZone($timezone);
+        $today = new DateTimeImmutable('today', $tz);
+        $cursor = $today->modify('-1 day')->format('Y-m-d');
+        $end = $today->modify('-' . $days . ' days')->format('Y-m-d');
         $statement = Database::connection()->prepare(
-            "INSERT INTO collector_state (state_key, current_day, target_day, status, last_run_at, completed_at)
-             VALUES (?, -1, ?, 'active', NULL, NULL)
-             ON DUPLICATE KEY UPDATE current_day = -1, target_day = VALUES(target_day), status = 'active', last_run_at = NULL, completed_at = NULL"
+            "INSERT INTO collector_state (state_key,cursor_date,end_date,timezone,status,last_run_at,completed_at)
+             VALUES (?,?,?,?, 'active',NULL,NULL)
+             ON DUPLICATE KEY UPDATE cursor_date=VALUES(cursor_date),end_date=VALUES(end_date),timezone=VALUES(timezone),status='active',last_run_at=NULL,completed_at=NULL"
         );
-        $statement->execute([self::STATE_KEY, $targetDay]);
+        $statement->execute([self::STATE_KEY, $cursor, $end, $timezone]);
+    }
+
+    public function dayOffset(string $date, string $timezone): int
+    {
+        $tz = new DateTimeZone($timezone);
+        $today = new DateTimeImmutable('today', $tz);
+        $target = new DateTimeImmutable($date, $tz);
+        return (int) $today->diff($target)->format('%r%a');
     }
 }
