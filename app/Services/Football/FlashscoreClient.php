@@ -194,6 +194,25 @@ final class FlashscoreClient
         ]);
     }
 
+    public function tournamentResults(string $tournamentTemplateId, int $seasonId, int $page = 1): array
+    {
+        if ($tournamentTemplateId === '') {
+            throw new RuntimeException('Tournament template ID cannot be empty.');
+        }
+        if ($seasonId < 1) {
+            throw new RuntimeException('Season ID must be greater than zero.');
+        }
+        if ($page < 1) {
+            throw new RuntimeException('Page must be greater than zero.');
+        }
+
+        return $this->get('tournaments/results', [
+            'tournament_template_id' => $tournamentTemplateId,
+            'season_id' => $seasonId,
+            'page' => $page,
+        ]);
+    }
+
     public function momentum(string $matchId): array
     {
         return $this->get('matches/momentum', ['match_id' => $matchId]);
