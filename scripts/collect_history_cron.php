@@ -65,6 +65,7 @@ try {
     echo "Historical cron collection completed.\n";
     echo "Started at date: {$cursorDate}\nEnd date: {$endDate}\n";
     echo "Days processed: {$result['days_processed']}\nEligible V1 fixtures: {$result['eligible']}\n";
+    echo "Statistics API calls: {$result['stats_api_calls']} / {$statisticsLimit}\n";
     echo "Statistics imported: {$result['stats_imported']}\nStatistics already imported: {$result['stats_already_imported']}\n";
     echo "Statistics skipped/errors: {$result['stats_skipped']}\nStatistics deferred: {$result['stats_deferred']}\nFailed fixtures: {$result['failed']}\n";
     $newState = $store->load($days, $timezone);
